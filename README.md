@@ -1,44 +1,28 @@
 # jules-automation
 
-Two reusable GitHub Actions workflows that automate a FIFO [Jules](https://jules.google.com) coding workflow: one keeps exactly one open issue labeled `jules` at a time (oldest first), and one auto-merges pull requests once CI passes and closes linked issues.
+A reusable GitHub Actions workflow that automates a FIFO [Jules](https://jules.google.com) coding workflow: it keeps exactly one open issue labeled `jules` at a time (oldest first), and it auto-merges pull requests once CI passes and closes linked issues.
 
 ## Usage
 
-Add **two** workflow files to your repository.
+Add a single workflow file to your repository.
 
-### 1) Issue labeling
-
-Create `.github/workflows/jules-issue-labeling.yml`:
+Create `.github/workflows/jules-automation.yml`:
 
 ```yaml
-name: Jules issue labeling
+name: Jules automation
 
 on:
   issues:
     types: [opened, closed]
-
-jobs:
-  jules-issue-labeling:
-    uses: sander-van-damme/jules-automation/.github/workflows/jules-issue-labeling.yml@main
-    permissions:
-      issues: write
-```
-
-### 2) Auto-merge
-
-Create `.github/workflows/jules-auto-merge.yml`:
-
-```yaml
-name: Jules auto-merge
-
-on:
   workflow_run:
     workflows: ["CI"] # Replace with your repository's CI workflow name
     types: [completed]
 
 jobs:
-  jules-auto-merge:
-    uses: sander-van-damme/jules-automation/.github/workflows/jules-auto-merge.yml@main
+  jules-automation:
+    uses: sander-van-damme/jules-automation/.github/workflows/jules-automation.yml@main
+    with:
+      event: ${{ github.event_name }}
     permissions:
       contents: write
       issues: write
