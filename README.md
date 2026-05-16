@@ -41,7 +41,7 @@ The `jules` label is then applied by that PAT identity instead of `github-action
 
 ### 1) Assign next Jules issue (FIFO)
 
-Triggered when an issue is opened or closed.
+Triggered when an issue is opened or closed, and also after a successful pull-request CI workflow run (to cover issue closure through PR merge).
 
 - Ensures the `jules` label exists.
 - Does nothing if any open issue already has `jules`.

@@ -19,7 +19,8 @@ permissions:
 
 jobs:
   assign-next-jules-issue:
-    if: ${{ inputs.event == 'issues' }}
+    needs: [auto-merge-pr]
+    if: ${{ always() && (inputs.event == 'issues' || (inputs.event == 'workflow_run' && needs.auto-merge-pr.result == 'success')) }}
     runs-on: ubuntu-latest
     concurrency:
       group: jules-automation-issues
@@ -33,6 +34,15 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const julesLabel = 'jules';
+            const callerEvent = '${{ inputs.event }}';
+
+            if (callerEvent === 'workflow_run') {
+              const workflowRun = context.payload.workflow_run;
+              if (!workflowRun || workflowRun.event !== 'pull_request' || workflowRun.conclusion !== 'success') {
+                core.info('Skipping label assignment: workflow_run is not a successful pull_request run.');
+                return;
+              }
+            }
 
             const ensureLabel = async (name, color, description) => {
               try {
