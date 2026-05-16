@@ -1,0 +1,125 @@
+name: Jules auto-merge
+
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: jules-auto-merge
+  cancel-in-progress: false
+
+jobs:
+  auto-merge-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge PR and close linked issue on CI success
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const workflowRun = context.payload.workflow_run;
+            if (workflowRun.event !== 'pull_request' || workflowRun.conclusion !== 'success') {
+              core.info(`Skipping: event=${workflowRun.event} conclusion=${workflowRun.conclusion}.`);
+              return;
+            }
+
+            const headSha = workflowRun.head_sha;
+
+            let pullRequests;
+            if (workflowRun.pull_requests?.length > 0) {
+              pullRequests = workflowRun.pull_requests;
+            } else {
+              const response = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: headSha,
+              });
+              pullRequests = response.data;
+            }
+
+            if (pullRequests.length === 0) {
+              core.info(`No pull requests are associated with ${headSha}.`);
+              return;
+            }
+
+            const repoResponse = await github.rest.repos.get({ owner, repo });
+            const repository = repoResponse.data;
+            let mergeMethod;
+            if (repository.allow_squash_merge) {
+              mergeMethod = 'squash';
+            } else if (repository.allow_merge_commit) {
+              mergeMethod = 'merge';
+            } else if (repository.allow_rebase_merge) {
+              mergeMethod = 'rebase';
+            } else {
+              throw new Error('No pull request merge method is enabled for this repository.');
+            }
+
+            for (const pr of pullRequests) {
+              const pullNumber = pr.number;
+              const pullResponse = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+              const pullRequest = pullResponse.data;
+
+              if (pullRequest.state !== 'open') {
+                core.info(`Skipping PR #${pullNumber}: it is ${pullRequest.state}.`);
+                continue;
+              }
+              if (pullRequest.draft) {
+                core.info(`Skipping PR #${pullNumber}: it is a draft.`);
+                continue;
+              }
+              if (pullRequest.head.sha !== headSha) {
+                core.info(`Skipping PR #${pullNumber}: head SHA changed.`);
+                continue;
+              }
+
+              try {
+                await github.rest.pulls.merge({
+                  owner,
+                  repo,
+                  pull_number: pullNumber,
+                  merge_method: mergeMethod,
+                });
+                core.info(`Merged PR #${pullNumber} with the ${mergeMethod} method.`);
+              } catch (error) {
+                core.info(`Could not merge PR #${pullNumber}: ${error.message}`);
+                continue;
+              }
+
+              const closingIssuesResponse = await github.graphql(
+                `query ClosingIssues($owner: String!, $repo: String!, $pullNumber: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $pullNumber) {
+                      closingIssuesReferences(first: 100) {
+                        nodes { id number state }
+                      }
+                    }
+                  }
+                }`,
+                { owner, repo, pullNumber },
+              );
+              const closingIssues = closingIssuesResponse.repository.pullRequest.closingIssuesReferences.nodes;
+              core.info(`Found ${closingIssues.length} linked closing issue(s) for PR #${pullNumber}.`);
+
+              for (const issue of closingIssues) {
+                if (issue.state === 'CLOSED') {
+                  core.info(`Linked issue #${issue.number} is already closed.`);
+                  continue;
+                }
+                await github.graphql(
+                  `mutation CloseLinkedIssue($issueId: ID!) {
+                    closeIssue(input: { issueId: $issueId, stateReason: COMPLETED }) {
+                      issue { number state }
+                    }
+                  }`,
+                  { issueId: issue.id },
+                );
+                core.info(`Closed linked issue #${issue.number}.`);
+              }
+            }
