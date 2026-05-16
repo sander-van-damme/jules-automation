@@ -1,22 +1,45 @@
 # jules-automation
 
-Drop-in GitHub Actions automation for a FIFO Jules workflow:
+Reusable GitHub Actions workflow that automates a FIFO [Jules](https://jules.google.com) coding workflow: it auto-merges pull requests once all checks pass, closes linked issues, and keeps exactly one open issue labeled `jules` at a time (oldest first).
 
-- auto-merge pull requests after checks pass,
-- close linked issues,
-- keep exactly one oldest open issue labeled `jules`.
+## Usage
 
-## Installation
+Add the following workflow file to your repository at `.github/workflows/jules-automation.yml`:
 
-Copy this file into any repository:
+```yaml
+name: Jules automation
 
-- `.github/workflows/jules-automation.yml`
+on:
+  workflow_run:
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issues:
+    types: [closed]
+  workflow_dispatch:
+
+concurrency:
+  group: jules-automation
+  cancel-in-progress: false
+
+jobs:
+  jules-automation:
+    uses: sander-van-damme/jules-automation/.github/workflows/jules-automation.yml@main
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      checks: read
+      statuses: read
+```
+
+That's it. You can adjust the triggers to fit your setup — the workflow handles each event type independently.
 
 ## How it works
 
 ### 1) Auto-merge after successful checks
 
-Triggered by `workflow_run` (all completed workflows).
+Triggered by `workflow_run` (all completed workflows) and `pull_request` events.
 
 For runs created by a pull request event with a successful conclusion, the workflow:
 
@@ -28,10 +51,7 @@ For runs created by a pull request event with a successful conclusion, the workf
 
 ### 2) Assign next Jules issue (FIFO)
 
-Triggered by:
-
-- `issues` with type `closed`
-- `workflow_dispatch` (manual run)
+Triggered by `issues: closed` and `workflow_dispatch` (manual run).
 
 The workflow:
 
