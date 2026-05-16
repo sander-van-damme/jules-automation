@@ -18,7 +18,7 @@ jobs:
     if: ${{ inputs.event == 'issues' }}
     runs-on: ubuntu-latest
     concurrency:
-      group: jules-issue-labeling
+      group: jules-automation-issues
       cancel-in-progress: false
     steps:
       - name: Label the oldest open issue for Jules
@@ -84,7 +84,7 @@ jobs:
     if: ${{ inputs.event == 'workflow_run' }}
     runs-on: ubuntu-latest
     concurrency:
-      group: jules-auto-merge
+      group: jules-automation-workflow-run
       cancel-in-progress: false
     steps:
       - name: Merge PR and close linked issue on CI success
