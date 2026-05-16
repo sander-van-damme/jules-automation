@@ -11,6 +11,7 @@ name: Jules automation
 
 on:
   workflow_run:
+    workflows: ["CI"] # Replace with the workflow name(s) that run your checks
     types: [completed]
   pull_request:
     types: [opened, synchronize, reopened]
@@ -34,12 +35,13 @@ jobs:
 ```
 
 That's it. You can adjust the triggers to fit your setup — the workflow handles each event type independently.
+`workflow_run` requires an explicit `workflows` list, so set it to your repository's CI workflow name(s).
 
 ## How it works
 
 ### 1) Auto-merge after successful checks
 
-Triggered by `workflow_run` (all completed workflows) and `pull_request` events.
+Triggered by `workflow_run` (completed runs of the workflows you list) and `pull_request` events.
 
 For runs created by a pull request event with a successful conclusion, the workflow:
 
