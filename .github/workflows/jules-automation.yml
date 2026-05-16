@@ -14,7 +14,7 @@ permissions:
   statuses: read
 
 concurrency:
-  group: jules-automation
+  group: jules-automation-reusable
   cancel-in-progress: false
 
 jobs:
