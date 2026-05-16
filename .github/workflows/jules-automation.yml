@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   auto-merge-prs:
-    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request' || github.event_name == 'check_suite' || github.event_name == 'check_run' || github.event_name == 'workflow_dispatch'
+    if: contains(fromJSON('["workflow_run","pull_request","check_suite","check_run","workflow_dispatch"]'), github.event_name)
     runs-on: ubuntu-latest
     steps:
       - name: Wait for CI checks to register
@@ -36,9 +36,9 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const associatedPullRequests = async (eventPayloadWithPulls, headSha) => {
-              if (eventPayloadWithPulls?.pull_requests?.length > 0) {
-                return eventPayloadWithPulls.pull_requests;
+            const associatedPullRequests = async (eventPayload, headSha) => {
+              if (eventPayload?.pull_requests?.length > 0) {
+                return eventPayload.pull_requests;
               }
 
               const response = await github.rest.repos.listPullRequestsAssociatedWithCommit({
