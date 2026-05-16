@@ -2,9 +2,16 @@ name: Jules automation
 
 on:
   workflow_call:
-  workflow_dispatch:
+  check_suite:
+    types: [completed]
+  check_run:
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened]
   issues:
     types: [opened, closed]
+  workflow_dispatch:
+
 
 permissions:
   contents: write
