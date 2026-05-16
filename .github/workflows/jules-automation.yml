@@ -3,6 +3,8 @@ name: Jules automation
 on:
   workflow_call:
   workflow_dispatch:
+  issues:
+    types: [opened, closed]
 
 permissions:
   contents: write

@@ -15,7 +15,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
   issues:
-    types: [closed]
+    types: [opened, closed]
   workflow_dispatch:
 
 concurrency:
@@ -51,7 +51,7 @@ For runs created by a pull request event with a successful conclusion, the workf
 
 ### 2) Assign next Jules issue (FIFO)
 
-Triggered by `issues: closed` and `workflow_dispatch` (manual run).
+Triggered by `issues: opened|closed` and `workflow_dispatch` (manual run).
 
 The workflow:
 
