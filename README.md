@@ -36,6 +36,7 @@ jobs:
 
 That's it. You can adjust the triggers to fit your setup — the workflow handles each event type independently.
 `workflow_run` requires an explicit `workflows` list, so set it to your repository's CI workflow name(s).
+The reusable workflow itself uses a different concurrency group (`jules-automation-reusable`) to avoid deadlocks with your top-level workflow.
 
 ## How it works
 
