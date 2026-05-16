@@ -8,6 +8,11 @@ on:
   issues:
     types:
       - closed
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
@@ -22,9 +27,16 @@ concurrency:
 
 jobs:
   auto-merge-prs:
-    if: github.event_name == 'workflow_run'
+    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      - name: Wait for CI checks to register
+        if: github.event_name == 'pull_request'
+        # Give GitHub Actions and other CI integrations time to register their check
+        # runs after the pull_request event fires. Without this delay the check-run
+        # list can appear empty even when CI is configured, causing a premature merge.
+        run: sleep 30
+
       - name: Auto-merge successful PRs and close linked issues
         uses: actions/github-script@v7
         with:
@@ -32,13 +44,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const workflowRun = context.payload.workflow_run;
-            if (workflowRun.event !== 'pull_request' || workflowRun.conclusion !== 'success') {
-              core.info(`Skipping auto-merge for workflow_run event=${workflowRun.event} conclusion=${workflowRun.conclusion}.`);
-              return;
-            }
-
-            const associatedPullRequests = async () => {
+            const associatedPullRequests = async (workflowRun) => {
               if (workflowRun.pull_requests.length > 0) {
                 return workflowRun.pull_requests;
               }
@@ -118,19 +124,25 @@ jobs:
               ]);
 
               const statusState = statusResponse.data.state;
-              if (statusState === 'pending' || statusState === 'failure') {
+              const checkRuns = checkRunsResponse.data.check_runs;
+
+              if (statusState === 'pending' || statusState === 'failure' || statusState === 'error') {
                 core.info(`Combined status for ${sha} is '${statusState}', not ready to merge.`);
                 return false;
               }
-              if (statusState !== 'success') {
-                core.info(`Unknown combined status state '${statusState}' for ${sha}; skipping.`);
-                return false;
+
+              if (checkRuns.length === 0) {
+                // No check runs AND the combined status is not in a failure/pending
+                // state (those are caught above), so there are no tests configured
+                // for this repository. Safe to merge.
+                core.info(`No check runs found for ${sha}; treating as no tests configured.`);
+                return true;
               }
 
               const blockingConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
               const inProgressStatuses = new Set(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
 
-              for (const checkRun of checkRunsResponse.data.check_runs) {
+              for (const checkRun of checkRuns) {
                 if (inProgressStatuses.has(checkRun.status)) {
                   core.info(`Check run '${checkRun.name}' is still '${checkRun.status}'.`);
                   return false;
@@ -145,15 +157,25 @@ jobs:
               return true;
             };
 
-            const pullRequests = await associatedPullRequests();
-            if (pullRequests.length === 0) {
-              core.info(`No pull requests are associated with ${workflowRun.head_sha}.`);
-              return;
+            let pullRequestsToProcess;
+            if (context.eventName === 'workflow_run') {
+              const workflowRun = context.payload.workflow_run;
+              if (workflowRun.event !== 'pull_request' || workflowRun.conclusion !== 'success') {
+                core.info(`Skipping auto-merge for workflow_run event=${workflowRun.event} conclusion=${workflowRun.conclusion}.`);
+                return;
+              }
+              pullRequestsToProcess = await associatedPullRequests(workflowRun);
+              if (pullRequestsToProcess.length === 0) {
+                core.info(`No pull requests are associated with ${workflowRun.head_sha}.`);
+                return;
+              }
+            } else {
+              pullRequestsToProcess = [{ number: context.payload.pull_request.number }];
             }
 
             const mergeMethod = await getMergeMethod();
 
-            for (const associatedPullRequest of pullRequests) {
+            for (const associatedPullRequest of pullRequestsToProcess) {
               const pullNumber = associatedPullRequest.number;
               const pullResponse = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
               const pullRequest = pullResponse.data;
@@ -166,8 +188,8 @@ jobs:
                 core.info(`Skipping PR #${pullNumber} because it is a draft.`);
                 continue;
               }
-              if (pullRequest.head.sha !== workflowRun.head_sha) {
-                core.info(`Skipping PR #${pullNumber} because its head SHA changed from ${workflowRun.head_sha} to ${pullRequest.head.sha}.`);
+              if (context.eventName === 'workflow_run' && pullRequest.head.sha !== context.payload.workflow_run.head_sha) {
+                core.info(`Skipping PR #${pullNumber} because its head SHA changed from ${context.payload.workflow_run.head_sha} to ${pullRequest.head.sha}.`);
                 continue;
               }
 
