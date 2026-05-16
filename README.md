@@ -13,8 +13,14 @@ on:
   workflow_run:
     workflows: ["CI"] # Replace with the workflow name(s) that run your checks
     types: [completed]
-  pull_request:
-    types: [opened, synchronize, reopened]
+  # Optional fallback for non-Action or edge-case CI integrations:
+  # check_suite:
+  #   types: [completed]
+  # check_run:
+  #   types: [completed]
+  # Optional secondary signal (can run in parallel with CI):
+  # pull_request:
+  #   types: [opened, synchronize, reopened]
   issues:
     types: [opened, closed]
   workflow_dispatch:
@@ -37,14 +43,18 @@ jobs:
 That's it. You can adjust the triggers to fit your setup — the workflow handles each event type independently.
 `workflow_run` requires an explicit `workflows` list, so set it to your repository's CI workflow name(s).
 The reusable workflow itself uses a different concurrency group (`jules-automation-reusable`) to avoid deadlocks with your top-level workflow.
+For reliable auto-merge behavior, treat `workflow_run` as the primary trigger and ensure all relevant CI workflow names are listed exactly.
+`workflow_dispatch` is a manual recovery trigger: it can re-check open pull requests and merge any that are now fully green.
 
 ## How it works
 
 ### 1) Auto-merge after successful checks
 
-Triggered by `workflow_run` (completed runs of the workflows you list) and `pull_request` events.
+Primarily triggered by `workflow_run` (completed runs of the workflows you list).
+Optionally, you can also trigger on `check_suite`/`check_run` (fallback) and `pull_request` (secondary signal).
+Manual `workflow_dispatch` runs process currently open pull requests as a recovery path.
 
-For runs created by a pull request event with a successful conclusion, the workflow:
+When triggered by a successful CI signal, the workflow:
 
 - finds the PR(s) for the run commit,
 - verifies the PR is still open, not draft, and still on the same SHA,

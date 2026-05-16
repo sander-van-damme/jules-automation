@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   auto-merge-prs:
-    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request'
+    if: contains(fromJSON('["workflow_run","pull_request","check_suite","check_run","workflow_dispatch"]'), github.event_name)
     runs-on: ubuntu-latest
     steps:
       - name: Wait for CI checks to register
@@ -36,15 +36,15 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const associatedPullRequests = async (workflowRun) => {
-              if (workflowRun.pull_requests.length > 0) {
-                return workflowRun.pull_requests;
+            const associatedPullRequests = async (eventPayload, headSha) => {
+              if (eventPayload?.pull_requests?.length > 0) {
+                return eventPayload.pull_requests;
               }
 
               const response = await github.rest.repos.listPullRequestsAssociatedWithCommit({
                 owner,
                 repo,
-                commit_sha: workflowRun.head_sha,
+                commit_sha: headSha,
               });
 
               return response.data;
@@ -150,19 +150,59 @@ jobs:
             };
 
             let pullRequestsToProcess;
+            let eventHeadSha;
             if (context.eventName === 'workflow_run') {
               const workflowRun = context.payload.workflow_run;
               if (workflowRun.event !== 'pull_request' || workflowRun.conclusion !== 'success') {
                 core.info(`Skipping auto-merge for workflow_run event=${workflowRun.event} conclusion=${workflowRun.conclusion}.`);
                 return;
               }
-              pullRequestsToProcess = await associatedPullRequests(workflowRun);
+              eventHeadSha = workflowRun.head_sha;
+              pullRequestsToProcess = await associatedPullRequests(workflowRun, eventHeadSha);
               if (pullRequestsToProcess.length === 0) {
                 core.info(`No pull requests are associated with ${workflowRun.head_sha}.`);
                 return;
               }
-            } else {
+            } else if (context.eventName === 'pull_request') {
+              eventHeadSha = context.payload.pull_request.head.sha;
               pullRequestsToProcess = [{ number: context.payload.pull_request.number }];
+            } else if (context.eventName === 'check_suite') {
+              const checkSuite = context.payload.check_suite;
+              if (checkSuite.status !== 'completed' || checkSuite.conclusion !== 'success') {
+                core.info(`Skipping auto-merge for check_suite status=${checkSuite.status} conclusion=${checkSuite.conclusion}.`);
+                return;
+              }
+              eventHeadSha = checkSuite.head_sha;
+              pullRequestsToProcess = await associatedPullRequests(checkSuite, eventHeadSha);
+              if (pullRequestsToProcess.length === 0) {
+                core.info(`No pull requests are associated with ${eventHeadSha}.`);
+                return;
+              }
+            } else if (context.eventName === 'check_run') {
+              const checkRun = context.payload.check_run;
+              if (checkRun.status !== 'completed' || checkRun.conclusion !== 'success') {
+                core.info(`Skipping auto-merge for check_run status=${checkRun.status} conclusion=${checkRun.conclusion}.`);
+                return;
+              }
+              eventHeadSha = checkRun.head_sha;
+              const checkSuitePullRequests = checkRun.check_suite?.pull_requests ?? [];
+              pullRequestsToProcess = await associatedPullRequests({ pull_requests: checkSuitePullRequests }, eventHeadSha);
+              if (pullRequestsToProcess.length === 0) {
+                core.info(`No pull requests are associated with ${eventHeadSha}.`);
+                return;
+              }
+            } else {
+              const openPullRequests = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+              });
+              pullRequestsToProcess = openPullRequests.map((pullRequest) => ({ number: pullRequest.number }));
+              if (pullRequestsToProcess.length === 0) {
+                core.info('No open pull requests are available for manual auto-merge processing.');
+                return;
+              }
             }
 
             const mergeMethod = await getMergeMethod();
@@ -180,8 +220,8 @@ jobs:
                 core.info(`Skipping PR #${pullNumber} because it is a draft.`);
                 continue;
               }
-              if (context.eventName === 'workflow_run' && pullRequest.head.sha !== context.payload.workflow_run.head_sha) {
-                core.info(`Skipping PR #${pullNumber} because its head SHA changed from ${context.payload.workflow_run.head_sha} to ${pullRequest.head.sha}.`);
+              if (eventHeadSha && pullRequest.head.sha !== eventHeadSha) {
+                core.info(`Skipping PR #${pullNumber} because its head SHA changed from ${eventHeadSha} to ${pullRequest.head.sha}.`);
                 continue;
               }
 
