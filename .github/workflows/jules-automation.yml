@@ -1,20 +1,91 @@
-name: Jules auto-merge
+name: Jules automation
 
 on:
   workflow_call:
+    inputs:
+      event:
+        description: Event name from the caller workflow.
+        required: true
+        type: string
 
 permissions:
   contents: write
   issues: write
   pull-requests: write
 
-concurrency:
-  group: jules-auto-merge
-  cancel-in-progress: false
-
 jobs:
-  auto-merge-pr:
+  assign-next-jules-issue:
+    if: ${{ inputs.event == 'issues' }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: jules-automation-issues
+      cancel-in-progress: false
+    steps:
+      - name: Label the oldest open issue for Jules
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const julesLabel = 'jules';
+
+            const ensureLabel = async (name, color, description) => {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              } catch (error) {
+                if (error.status !== 422) {
+                  throw error;
+                }
+              }
+            };
+
+            await ensureLabel(julesLabel, '0e8a16', 'Issues intended for Jules automation.');
+
+            const julesIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              labels: julesLabel,
+              per_page: 100,
+            });
+            const openJulesIssues = julesIssues.filter((issue) => !issue.pull_request);
+
+            if (openJulesIssues.length > 0) {
+              const issueNumbers = openJulesIssues.map((issue) => `#${issue.number}`).join(', ');
+              core.info(`At least one open issue already has the ${julesLabel} label: ${issueNumbers}.`);
+              return;
+            }
+
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              sort: 'created',
+              direction: 'asc',
+              per_page: 100,
+            });
+
+            const oldestOpenIssue = openIssues.find((issue) => !issue.pull_request);
+
+            if (!oldestOpenIssue) {
+              core.info('No open issues are available for Jules assignment.');
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: oldestOpenIssue.number,
+              labels: [julesLabel],
+            });
+            core.info(`Added the ${julesLabel} label to oldest open issue #${oldestOpenIssue.number}.`);
+
+  auto-merge-pr:
+    if: ${{ inputs.event == 'workflow_run' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: jules-automation-workflow-run
+      cancel-in-progress: false
     steps:
       - name: Merge PR and close linked issue on CI success
         uses: actions/github-script@v7
