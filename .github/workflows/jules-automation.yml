@@ -118,12 +118,12 @@ jobs:
               ]);
 
               const statusState = statusResponse.data.state;
-              if (statusState !== 'success' && statusState !== 'pending' && statusState !== 'failure') {
-                core.info(`Unknown combined status state '${statusState}' for ${sha}; skipping.`);
+              if (statusState === 'pending' || statusState === 'failure') {
+                core.info(`Combined status for ${sha} is '${statusState}', not ready to merge.`);
                 return false;
               }
               if (statusState !== 'success') {
-                core.info(`Combined status for ${sha} is '${statusState}', not ready to merge.`);
+                core.info(`Unknown combined status state '${statusState}' for ${sha}; skipping.`);
                 return false;
               }
 
@@ -246,9 +246,7 @@ jobs:
               per_page: 100,
             });
 
-            const oldestOpenIssue = openIssues
-              .filter((issue) => !issue.pull_request)
-              .sort((first, second) => first.number - second.number)[0];
+            const oldestOpenIssue = openIssues.find((issue) => !issue.pull_request);
 
             if (!oldestOpenIssue) {
               core.info('No open issues are available for Jules assignment.');
