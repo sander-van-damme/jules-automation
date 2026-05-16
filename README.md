@@ -1,73 +1,70 @@
 # jules-automation
 
-Reusable GitHub Actions workflow that automates a FIFO [Jules](https://jules.google.com) coding workflow: it auto-merges pull requests once all checks pass, closes linked issues, and keeps exactly one open issue labeled `jules` at a time (oldest first).
+Two reusable GitHub Actions workflows that automate a FIFO [Jules](https://jules.google.com) coding workflow: one keeps exactly one open issue labeled `jules` at a time (oldest first), and one auto-merges pull requests once CI passes and closes linked issues.
 
 ## Usage
 
-Add the following workflow file to your repository at `.github/workflows/jules-automation.yml`:
+Add **two** workflow files to your repository.
+
+### 1) Issue labeling
+
+Create `.github/workflows/jules-issue-labeling.yml`:
 
 ```yaml
-name: Jules automation
+name: Jules issue labeling
+
+on:
+  issues:
+    types: [opened, closed]
+
+jobs:
+  jules-issue-labeling:
+    uses: sander-van-damme/jules-automation/.github/workflows/jules-issue-labeling.yml@main
+    permissions:
+      issues: write
+```
+
+### 2) Auto-merge
+
+Create `.github/workflows/jules-auto-merge.yml`:
+
+```yaml
+name: Jules auto-merge
 
 on:
   workflow_run:
-    workflows: ["CI"] # Replace with the workflow name(s) that run your checks
+    workflows: ["CI"] # Replace with your repository's CI workflow name
     types: [completed]
-  check_suite:
-    types: [completed]
-  check_run:
-    types: [completed]
-  pull_request:
-    types: [opened, synchronize, reopened]
-  issues:
-    types: [opened, closed]
-  workflow_dispatch:
-
-concurrency:
-  group: jules-automation
-  cancel-in-progress: false
 
 jobs:
-  jules-automation:
-    uses: sander-van-damme/jules-automation/.github/workflows/jules-automation.yml@main
+  jules-auto-merge:
+    uses: sander-van-damme/jules-automation/.github/workflows/jules-auto-merge.yml@main
     permissions:
       contents: write
       issues: write
       pull-requests: write
-      checks: read
-      statuses: read
 ```
 
-That's it. You can adjust the triggers to fit your setup — the workflow handles each event type independently.
-`workflow_run` requires an explicit `workflows` list, so set it to your repository's CI workflow name(s).
-The reusable workflow itself uses a different concurrency group (`jules-automation-reusable`) to avoid deadlocks with your top-level workflow.
-For reliable auto-merge behavior, treat `workflow_run` as the primary trigger and ensure all relevant CI workflow names are listed exactly.
-`workflow_dispatch` is a manual recovery trigger: it can re-check open pull requests and merge any that are now fully green.
+Set `workflows` to the exact name of your repository's CI workflow.
 
 ## How it works
 
-### 1) Auto-merge after successful checks
+### 1) Assign next Jules issue (FIFO)
 
-Primarily triggered by `workflow_run` (completed runs of the workflows you list).
-Optionally, you can also trigger on `check_suite`/`check_run` (fallback) and `pull_request` (secondary signal).
-Manual `workflow_dispatch` runs process currently open pull requests as a recovery path.
+Triggered when an issue is opened or closed.
 
-When triggered by a successful CI signal, the workflow:
+- Ensures the `jules` label exists.
+- Does nothing if any open issue already has `jules`.
+- Otherwise labels the oldest open issue with `jules`.
 
-- finds the PR(s) for the run commit,
-- verifies the PR is still open, not draft, and still on the same SHA,
-- verifies commit statuses/check-runs are fully green,
-- merges using the first enabled repository merge strategy,
-- closes issues referenced by PR closing keywords.
+This keeps work in FIFO order: the oldest issue gets the label, and after it is closed the next oldest is labeled.
 
-### 2) Assign next Jules issue (FIFO)
+### 2) Auto-merge after CI success
 
-Triggered by `issues: opened|closed` and `workflow_dispatch` (manual run).
+Triggered when the configured CI workflow completes on a pull request.
 
-The workflow:
-
-- ensures the `jules` label exists,
-- does nothing if any open issue already has `jules`,
-- otherwise labels the oldest open issue with `jules`.
-
-This keeps work in FIFO order: oldest issue gets the label, then after closure the next oldest gets labeled.
+- Skips runs that are not from a pull request or did not succeed.
+- Finds the PR(s) associated with the completed run.
+- Verifies each PR is still open, not a draft, and on the same commit SHA.
+- Merges using the first enabled repository merge strategy.
+- Closes issues referenced by PR closing keywords.
