@@ -1,0 +1,262 @@
+name: Jules automation
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    types:
+      - completed
+  issues:
+    types:
+      - closed
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: jules-automation
+  cancel-in-progress: false
+
+jobs:
+  auto-merge-prs:
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-merge successful PRs and close linked issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const workflowRun = context.payload.workflow_run;
+            if (workflowRun.event !== 'pull_request' || workflowRun.conclusion !== 'success') {
+              core.info(`Skipping auto-merge for workflow_run event=${workflowRun.event} conclusion=${workflowRun.conclusion}.`);
+              return;
+            }
+
+            const associatedPullRequests = async () => {
+              if (workflowRun.pull_requests.length > 0) {
+                return workflowRun.pull_requests;
+              }
+
+              const response = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: workflowRun.head_sha,
+              });
+
+              return response.data;
+            };
+
+            const listClosingIssues = async (pullNumber) => {
+              const response = await github.graphql(
+                `query ClosingIssues($owner: String!, $repo: String!, $pullNumber: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $pullNumber) {
+                      closingIssuesReferences(first: 100) {
+                        nodes {
+                          id
+                          number
+                          state
+                        }
+                      }
+                    }
+                  }
+                }`,
+                { owner, repo, pullNumber },
+              );
+
+              return response.repository.pullRequest.closingIssuesReferences.nodes;
+            };
+
+            const closeIssue = async (issue) => {
+              if (issue.state === 'CLOSED') {
+                core.info(`Linked issue #${issue.number} is already closed.`);
+                return;
+              }
+
+              await github.graphql(
+                `mutation CloseLinkedIssue($issueId: ID!) {
+                  closeIssue(input: { issueId: $issueId, stateReason: COMPLETED }) {
+                    issue {
+                      number
+                      state
+                    }
+                  }
+                }`,
+                { issueId: issue.id },
+              );
+
+              core.info(`Closed linked issue #${issue.number}.`);
+            };
+
+            const getMergeMethod = async () => {
+              const response = await github.rest.repos.get({ owner, repo });
+              const repository = response.data;
+
+              if (repository.allow_squash_merge) {
+                return 'squash';
+              }
+              if (repository.allow_merge_commit) {
+                return 'merge';
+              }
+              if (repository.allow_rebase_merge) {
+                return 'rebase';
+              }
+
+              throw new Error('No pull request merge method is enabled for this repository.');
+            };
+
+            const hasGreenChecks = async (sha) => {
+              const [statusResponse, checkRunsResponse] = await Promise.all([
+                github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: sha }),
+                github.rest.checks.listForRef({ owner, repo, ref: sha, per_page: 100 }),
+              ]);
+
+              const statusState = statusResponse.data.state;
+              if (statusState === 'pending' || statusState === 'failure') {
+                core.info(`Combined status for ${sha} is '${statusState}', not ready to merge.`);
+                return false;
+              }
+              if (statusState !== 'success') {
+                core.info(`Unknown combined status state '${statusState}' for ${sha}; skipping.`);
+                return false;
+              }
+
+              const blockingConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+              const inProgressStatuses = new Set(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
+
+              for (const checkRun of checkRunsResponse.data.check_runs) {
+                if (inProgressStatuses.has(checkRun.status)) {
+                  core.info(`Check run '${checkRun.name}' is still '${checkRun.status}'.`);
+                  return false;
+                }
+
+                if (checkRun.status === 'completed' && blockingConclusions.has(checkRun.conclusion)) {
+                  core.info(`Check run '${checkRun.name}' concluded with '${checkRun.conclusion}'.`);
+                  return false;
+                }
+              }
+
+              return true;
+            };
+
+            const pullRequests = await associatedPullRequests();
+            if (pullRequests.length === 0) {
+              core.info(`No pull requests are associated with ${workflowRun.head_sha}.`);
+              return;
+            }
+
+            const mergeMethod = await getMergeMethod();
+
+            for (const associatedPullRequest of pullRequests) {
+              const pullNumber = associatedPullRequest.number;
+              const pullResponse = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+              const pullRequest = pullResponse.data;
+
+              if (pullRequest.state !== 'open') {
+                core.info(`Skipping PR #${pullNumber} because it is ${pullRequest.state}.`);
+                continue;
+              }
+              if (pullRequest.draft) {
+                core.info(`Skipping PR #${pullNumber} because it is a draft.`);
+                continue;
+              }
+              if (pullRequest.head.sha !== workflowRun.head_sha) {
+                core.info(`Skipping PR #${pullNumber} because its head SHA changed from ${workflowRun.head_sha} to ${pullRequest.head.sha}.`);
+                continue;
+              }
+
+              const checksAreGreen = await hasGreenChecks(pullRequest.head.sha);
+              if (!checksAreGreen) {
+                core.info(`Skipping PR #${pullNumber} because not all checks are successful yet.`);
+                continue;
+              }
+
+              try {
+                await github.rest.pulls.merge({
+                  owner,
+                  repo,
+                  pull_number: pullNumber,
+                  merge_method: mergeMethod,
+                });
+                core.info(`Merged PR #${pullNumber} with the ${mergeMethod} method.`);
+              } catch (error) {
+                core.info(`Could not merge PR #${pullNumber}: ${error.message}`);
+                continue;
+              }
+
+              const closingIssues = await listClosingIssues(pullNumber);
+              core.info(`Found ${closingIssues.length} linked closing issue(s) for PR #${pullNumber}.`);
+
+              for (const issue of closingIssues) {
+                await closeIssue(issue);
+              }
+            }
+
+  assign-next-jules-issue:
+    if: github.event_name == 'issues' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label the oldest open issue for Jules
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const julesLabel = 'jules';
+
+            const ensureLabel = async (name, color, description) => {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              } catch (error) {
+                if (error.status !== 422) {
+                  throw error;
+                }
+              }
+            };
+
+            await ensureLabel(julesLabel, '0e8a16', 'Issues intended for Jules automation.');
+
+            const julesIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              labels: julesLabel,
+              per_page: 100,
+            });
+            const openJulesIssues = julesIssues.filter((issue) => !issue.pull_request);
+
+            if (openJulesIssues.length > 0) {
+              const issueNumbers = openJulesIssues.map((issue) => `#${issue.number}`).join(', ');
+              core.info(`At least one open issue already has the ${julesLabel} label: ${issueNumbers}.`);
+              return;
+            }
+
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              sort: 'created',
+              direction: 'asc',
+              per_page: 100,
+            });
+
+            const oldestOpenIssue = openIssues.find((issue) => !issue.pull_request);
+
+            if (!oldestOpenIssue) {
+              core.info('No open issues are available for Jules assignment.');
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: oldestOpenIssue.number,
+              labels: [julesLabel],
+            });
+            core.info(`Added the ${julesLabel} label to oldest open issue #${oldestOpenIssue.number}.`);
