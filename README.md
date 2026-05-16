@@ -44,6 +44,7 @@ That's it. You can adjust the triggers to fit your setup — the workflow handle
 `workflow_run` requires an explicit `workflows` list, so set it to your repository's CI workflow name(s).
 The reusable workflow itself uses a different concurrency group (`jules-automation-reusable`) to avoid deadlocks with your top-level workflow.
 For reliable auto-merge behavior, treat `workflow_run` as the primary trigger and ensure all relevant CI workflow names are listed exactly.
+`workflow_dispatch` is a manual recovery trigger: it can re-check open pull requests and merge any that are now fully green.
 
 ## How it works
 
@@ -51,6 +52,7 @@ For reliable auto-merge behavior, treat `workflow_run` as the primary trigger an
 
 Primarily triggered by `workflow_run` (completed runs of the workflows you list).
 Optionally, you can also trigger on `check_suite`/`check_run` (fallback) and `pull_request` (secondary signal).
+Manual `workflow_dispatch` runs process currently open pull requests as a recovery path.
 
 When triggered by a successful CI signal, the workflow:
 

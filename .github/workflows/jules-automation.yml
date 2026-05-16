@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   auto-merge-prs:
-    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request' || github.event_name == 'check_suite' || github.event_name == 'check_run'
+    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request' || github.event_name == 'check_suite' || github.event_name == 'check_run' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Wait for CI checks to register
@@ -178,7 +178,7 @@ jobs:
                 core.info(`No pull requests are associated with ${eventHeadSha}.`);
                 return;
               }
-            } else {
+            } else if (context.eventName === 'check_run') {
               const checkRun = context.payload.check_run;
               if (checkRun.status !== 'completed' || checkRun.conclusion !== 'success') {
                 core.info(`Skipping auto-merge for check_run status=${checkRun.status} conclusion=${checkRun.conclusion}.`);
@@ -189,6 +189,18 @@ jobs:
               pullRequestsToProcess = await associatedPullRequests({ pull_requests: checkSuitePullRequests }, eventHeadSha);
               if (pullRequestsToProcess.length === 0) {
                 core.info(`No pull requests are associated with ${eventHeadSha}.`);
+                return;
+              }
+            } else {
+              const openPullRequests = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+              });
+              pullRequestsToProcess = openPullRequests.map((pullRequest) => ({ number: pullRequest.number }));
+              if (pullRequestsToProcess.length === 0) {
+                core.info('No open pull requests are available for manual auto-merge processing.');
                 return;
               }
             }
