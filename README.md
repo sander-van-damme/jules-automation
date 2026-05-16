@@ -13,14 +13,12 @@ on:
   workflow_run:
     workflows: ["CI"] # Replace with the workflow name(s) that run your checks
     types: [completed]
-  # Optional fallback for non-Action or edge-case CI integrations:
-  # check_suite:
-  #   types: [completed]
-  # check_run:
-  #   types: [completed]
-  # Optional secondary signal (can run in parallel with CI):
-  # pull_request:
-  #   types: [opened, synchronize, reopened]
+  check_suite:
+    types: [completed]
+  check_run:
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened]
   issues:
     types: [opened, closed]
   workflow_dispatch:
