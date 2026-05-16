@@ -7,6 +7,10 @@ on:
         description: Event name from the caller workflow.
         required: true
         type: string
+    secrets:
+      jules_pat:
+        description: Personal access token used to apply the jules label.
+        required: true
 
 permissions:
   contents: write
@@ -24,6 +28,7 @@ jobs:
       - name: Label the oldest open issue for Jules
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.jules_pat }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;

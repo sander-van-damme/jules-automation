@@ -23,6 +23,8 @@ jobs:
     uses: sander-van-damme/jules-automation/.github/workflows/jules-automation.yml@main
     with:
       event: ${{ github.event_name }}
+    secrets:
+      jules_pat: ${{ secrets.JULES_PAT }}
     permissions:
       contents: write
       issues: write
@@ -30,6 +32,10 @@ jobs:
 ```
 
 Set `workflows` to the exact name of your repository's CI workflow.
+Set a repository secret named `JULES_PAT` and pass it as `jules_pat` to this reusable workflow.
+The `jules` label is then applied by that PAT identity instead of `github-actions[bot]`.
+
+`JULES_PAT` should belong to a dedicated service/user account and have permissions to read/write issues and pull requests in the target repository.
 
 ## How it works
 
