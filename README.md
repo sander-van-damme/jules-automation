@@ -15,7 +15,7 @@ on:
   issues:
     types: [opened, closed]
   workflow_run:
-    workflows: ["CI"] # Replace with your repository's CI workflow name
+    workflows: ['CI'] # Replace with your repository's CI workflow name
     types: [completed]
 
 jobs:
