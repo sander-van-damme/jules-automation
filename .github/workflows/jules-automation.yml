@@ -174,10 +174,19 @@ jobs:
               per_page: 100,
             });
 
-            const oldestOpenIssue = openIssues.find((issue) => !issue.pull_request);
+            const oldestOpenIssue = openIssues.find((issue) => {
+              if (issue.pull_request) {
+                return false;
+              }
+              const labels = issue.labels || [];
+              return !labels.some((label) => {
+                const labelName = typeof label === 'string' ? label : label?.name;
+                return labelName === 'jules-is-stuck';
+              });
+            });
 
             if (!oldestOpenIssue) {
-              core.info('No open issues are available for Jules assignment.');
+              core.info('No open issues are available for Jules assignment after skipping jules-is-stuck issues.');
               return;
             }
 
