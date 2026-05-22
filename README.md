@@ -14,6 +14,8 @@ name: Jules automation
 on:
   issues:
     types: [opened, closed]
+  issue_comment:
+    types: [created]
   workflow_run:
     workflows: ['CI'] # Replace with your repository's CI workflow name
     types: [completed]
@@ -58,3 +60,11 @@ Triggered when the configured CI workflow completes on a pull request.
 - Verifies each PR is still open, not a draft, and on the same commit SHA.
 - Merges using the first enabled repository merge strategy.
 - Closes issues referenced by PR closing keywords.
+
+### 3) Mark linked issue as stuck from PR marker
+
+Triggered when a new comment is added to a pull request.
+
+- Checks whether the PR body contains `<!--jules-is-stuck-->`.
+- If present, removes `jules` (if present) from each linked issue.
+- Adds `jules-is-stuck` to each linked issue.
